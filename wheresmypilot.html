@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Status Dashboard - Calendar Integration</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #000; color: #0f0; padding: 20px; text-align: center; }
+        button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+        #content { white-space: pre-wrap; background: #111; padding: 15px; border-radius: 8px; max-width: 800px; margin: 20px auto; }
+    </style>
+</head>
+<body>
+    <h1>My Flights from Google Calendar</h1>
+    <button id="authorize_button" style="visibility: hidden;">Authorize Access</button>
+    <button id="signout_button" style="visibility: hidden;">Sign Out</button>
+    <div id="content">Click Authorize to load flights...</div>
+
+    <script type="text/javascript">
+        const CLIENT_ID = '876006485542-j74gnbbdajs7r24llvoo3aqgodkbq3a7.apps.googleusercontent.com';  // From step 4
+        const API_KEY = 'AIzaSyABv42E9BIOikNk_yD6Q9lk1o016Fitgzs';                                 // From step 5 (optional)
+        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+        const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
+
+        let tokenClient;
+        let gapiInited = false;
+        let gisInited = false;
+
+        function gapiLoaded() {
+            gapi.load('client', initializeGapiClient);
+        }
+
+        async function initializeGapiClient() {
+            await gapi.client.init({
+                apiKey: API_KEY,
+                discoveryDocs: [DISCOVERY_DOC],
+            });
+            gapiInited = true;
+            maybeEnableButtons();
+        }
+
+        function gisLoaded() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '',  // defined later
+            });
+            gisInited = true;
+            maybeEnableButtons();
+        }
+
+        function maybeEnableButtons() {
+            if (gapiInited && gisInited) {
+                document.getElementById('authorize_button').style.visibility = 'visible';
+            }
+        }
+
+        function handleAuthClick() {
+            tokenClient.callback = async (resp) => {
+                if (resp.error) {
+                    throw resp;
+                }
+                document.getElementById('signout_button').style.visibility = 'visible';
+                document.getElementById('authorize_button').innerText = 'Refresh';
+                await listUpcomingEvents();
+            };
+
+            if (!gapi.client.getToken()) {
+                tokenClient.requestAccessToken({prompt: 'consent'});
+            } else {
+                tokenClient.requestAccessToken({prompt: ''});
+            }
+        }
+
+        function handleSignoutClick() {
+            const token = gapi.client.getToken();
+            if (token) {
+                google.accounts.oauth2.revoke(token.access_token);
+                gapi.client.setToken('');
+                document.getElementById('content').innerText = 'Signed out.';
+                document.getElementById('authorize_button').innerText = 'Authorize';
+                document.getElementById('signout_button').style.visibility = 'hidden';
+            }
+        }
+
+        async function listUpcomingEvents() {
+    try {
+        const request = {
+            'calendarId': '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
+            'timeMin': (new Date()).toISOString(),
+            'showDeleted': false,
+            'singleEvents': true,
+            'maxResults': 10,
+            'orderBy': 'startTime'
+        };
+        const response = await gapi.client.calendar.events.list(request);
+        const events = response.result.items;
+
+        if (!events || events.length === 0) {
+            document.getElementById('content').innerText = 'No upcoming flights found.';
+            return;
+        }
+
+        let output = 'Upcoming Flights:\n\n';
+        events.forEach(event => {
+            const start = event.start.dateTime 
+                ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                : event.start.date;
+            output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+            if (event.description) output += `Details: ${event.description}\n\n`;
+        });
+        document.getElementById('content').innerText = output;
+
+        // Start auto-refresh every 5 minutes (300000 ms)
+        // We only set this once - using a flag to prevent multiple timers
+        if (!window.refreshInterval) {
+            window.refreshInterval = setInterval(listUpcomingEvents, 300000);
+            console.log('Auto-refresh started: every 5 minutes');
+        }
+
+    } catch (err) {
+        document.getElementById('content').innerText = 'Error loading flights: ' + err.message;
+        console.error('Calendar API error:', err);
+    }
+}
+
+        // Load libraries
+        gapiLoaded();
+        // The next script is loaded async below
+    </script>
+
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
+    <script>
+        document.getElementById('authorize_button').onclick = handleAuthClick;
+        document.getElementById('signout_button').onclick = handleSignoutClick;
+    </script>
+</body>
+</html>
