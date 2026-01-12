@@ -106,52 +106,64 @@
         }
 
         async function listUpcomingEvents() {
-            try {
-                const request = {
-                    'calendarId': '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
-                    'timeMin': (new Date()).toISOString(),
-                    'showDeleted': false,
-                    'singleEvents': true,
-                    'maxResults': 10,
-                    'orderBy': 'startTime'
-                };
-
-                const response = await gapi.client.calendar.events.list(request);
-                const events = response.result.items || [];
-
-                if (events.length === 0) {
-                    document.getElementById('content').innerText = 'No upcoming flights found.';
-                    return;
-                }
-
-                let output = 'Upcoming Flights:\n\n';
-                events.forEach(event => {
-                    const start = event.start.dateTime
-                        ? new Date(event.start.dateTime).toLocaleString('en-US', {
-                            weekday: 'short',
-                            month: 'short',
-                            day: 'numeric',
-                            hour: 'numeric',
-                            minute: '2-digit'
-                        })
-                        : event.start.date;
-                    output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
-                    if (event.description) output += `Details: ${event.description}\n\n`;
-                });
-                document.getElementById('content').innerText = output;
-
-                // Auto-refresh every 5 minutes (only set once)
-                if (!window.refreshInterval) {
-                    window.refreshInterval = setInterval(listUpcomingEvents, 300000);
-                    console.log('Auto-refresh started: every 5 minutes');
-                }
-
-            } catch (err) {
-                document.getElementById('content').innerText = 'Error loading flights:\n' + (err.result?.error?.message || err.message);
-                console.error('Calendar error:', err);
-            }
+    try {
+        if (!gapi.client || !gapi.client.calendar) {
+            throw new Error('Google API client not fully loaded or initialized');
         }
 
+        const request = {
+            'calendarId': '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
+            'timeMin': (new Date()).toISOString(),
+            'showDeleted': false,
+            'singleEvents': true,
+            'maxResults': 10,
+            'orderBy': 'startTime'
+        };
+
+        const response = await gapi.client.calendar.events.list(request);
+
+        if (!response || !response.result) {
+            throw new Error('API response was empty or invalid');
+        }
+
+        const events = response.result.items || [];
+
+        if (events.length === 0) {
+            document.getElementById('content').innerText = 'No upcoming flights found in the calendar.';
+            return;
+        }
+
+        let output = 'Upcoming Flights:\n\n';
+        events.forEach(event => {
+            const start = event.start?.dateTime
+                ? new Date(event.start.dateTime).toLocaleString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                })
+                : event.start?.date || 'No date';
+            output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+            if (event.description) output += `Details: ${event.description}\n\n`;
+        });
+        document.getElementById('content').innerText = output;
+
+        // Auto-refresh every 5 minutes
+        if (!window.refreshInterval) {
+            window.refreshInterval = setInterval(listUpcomingEvents, 300000);
+            console.log('Auto-refresh started: every 5 minutes');
+        }
+
+    } catch (err) {
+        let errMsg = 'Error loading flights: ' + (err.message || 'Unknown error');
+        if (err.result?.error?.message) {
+            errMsg += '\nAPI Details: ' + err.result.error.message;
+        }
+        document.getElementById('content').innerText = errMsg;
+        console.error('Calendar API error:', err);
+    }
+}
         // Button click handlers
         document.getElementById('authorize_button').onclick = handleAuthClick;
         document.getElementById('signout_button').onclick = handleSignoutClick;
