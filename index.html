@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Where's My Pilot</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #000;
+            color: #0f0;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 { color: #fff; margin-bottom: 10px; }
+        button {
+            margin: 10px;
+            padding: 12px 24px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #content {
+            white-space: pre-wrap;
+            background: #111;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 800px;
+            margin: 20px auto;
+            text-align: left;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .hidden { visibility: hidden; }
+    </style>
+</head>
+<body>
+    <h1>Where's My Pilot - Flight Status</h1>
+    <button id="authorize_button" class="hidden">Authorize with Google</button>
+    <button id="signout_button" class="hidden">Sign Out</button>
+
+    <div id="content">Click "Authorize with Google" to load your upcoming flights...</div>
+
+    <!-- Google scripts -->
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
+    <script>
+        // === YOUR CONFIG - DO NOT SHARE THIS FILE PUBLICLY ===
+        const CLIENT_ID = '876006485542-j74gnbbdajs7r24llvoo3aqgodkbq3a7.apps.googleusercontent.com';
+        const API_KEY = 'YOUR_API_KEY_HERE'; // Optional - can be empty if not using for discovery
+        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+        const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
+
+        let tokenClient;
+        let gisInited = false;
+
+        function gapiLoaded() {
+            gapi.load('client', async () => {
+                try {
+                    await gapi.client.init({
+                        apiKey: API_KEY,
+                        discoveryDocs: [DISCOVERY_DOC],
+                    });
+                    console.log('gapi.client initialized');
+                } catch (err) {
+                    console.error('gapi init failed:', err);
+                }
+            });
+        }
+
+        function gisLoaded() {
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: async (resp) => {
+                    if (resp.error) {
+                        console.error('Token error:', resp);
+                        document.getElementById('content').innerText = 'Authorization failed: ' + resp.error;
+                        return;
+                    }
+                    document.getElementById('signout_button').classList.remove('hidden');
+                    document.getElementById('authorize_button').innerText = 'Refresh Flights';
+                    await listUpcomingEvents();
+                },
+            });
+            gisInited = true;
+            document.getElementById('authorize_button').classList.remove('hidden');
+        }
+
+        function handleAuthClick() {
+            if (!gisInited) {
+                alert('Google services still loading - please wait a moment and try again.');
+                return;
+            }
+            tokenClient.requestAccessToken({prompt: ''});
+        }
+
+        function handleSignoutClick() {
+            google.accounts.oauth2.revoke(gapi.client.getToken()?.access_token || '');
+            gapi.client.setToken('');
+            document.getElementById('content').innerText = 'Signed out. Click Authorize to reconnect.';
+            document.getElementById('authorize_button').innerText = 'Authorize with Google';
+            document.getElementById('signout_button').classList.add('hidden');
+        }
+
+        async function listUpcomingEvents() {
+            try {
+                const request = {
+                    'calendarId': '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
+                    'timeMin': (new Date()).toISOString(),
+                    'showDeleted': false,
+                    'singleEvents': true,
+                    'maxResults': 10,
+                    'orderBy': 'startTime'
+                };
+
+                const response = await gapi.client.calendar.events.list(request);
+                const events = response.result.items || [];
+
+                if (events.length === 0) {
+                    document.getElementById('content').innerText = 'No upcoming flights found.';
+                    return;
+                }
+
+                let output = 'Upcoming Flights:\n\n';
+                events.forEach(event => {
+                    const start = event.start.dateTime
+                        ? new Date(event.start.dateTime).toLocaleString('en-US', {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit'
+                        })
+                        : event.start.date;
+                    output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+                    if (event.description) output += `Details: ${event.description}\n\n`;
+                });
+                document.getElementById('content').innerText = output;
+
+                // Auto-refresh every 5 minutes (only set once)
+                if (!window.refreshInterval) {
+                    window.refreshInterval = setInterval(listUpcomingEvents, 300000);
+                    console.log('Auto-refresh started: every 5 minutes');
+                }
+
+            } catch (err) {
+                document.getElementById('content').innerText = 'Error loading flights:\n' + (err.result?.error?.message || err.message);
+                console.error('Calendar error:', err);
+            }
+        }
+
+        // Button click handlers
+        document.getElementById('authorize_button').onclick = handleAuthClick;
+        document.getElementById('signout_button').onclick = handleSignoutClick;
+    </script>
+</body>
+</html>
