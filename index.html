@@ -204,111 +204,92 @@
         }
 
         async function updateAllAircraftOnMap(calendarEvents) {
-            if (!Array.isArray(calendarEvents)) {
-                console.warn('calendarEvents not array - using empty:', calendarEvents);
-                calendarEvents = [];
+    if (!Array.isArray(calendarEvents)) {
+        console.warn('calendarEvents not array:', calendarEvents);
+        calendarEvents = [];
+    }
+
+    Object.values(markers).forEach(m => flightMap.removeLayer(m));
+    markers = {};
+
+    const bounds = L.latLngBounds();
+    let aircraftFound = false;
+
+    // 1. Spirit flights from calendar (OpenSky lookup)
+    if (calendarEvents.length > 0) {
+        // Bounding box: continental US (adjust if needed)
+        const bboxParams = new URLSearchParams({
+            lamin: '24.0',
+            lamax: '49.0',
+            lomin: '-125.0',
+            lomax: '-66.0'
+        });
+
+        try {
+            const res = await fetch(`https://opensky-network.org/api/states/all?${bboxParams}`);
+            if (!res.ok) {
+                console.log(`OpenSky states/all failed: status ${res.status}`);
+                throw new Error(`HTTP ${res.status}`);
             }
 
-            Object.values(markers).forEach(m => flightMap.removeLayer(m));
-            markers = {};
+            const data = await res.json();
+            console.log('OpenSky states/all response received');
 
-            const bounds = L.latLngBounds();
-            let aircraftFound = false;
-
-            // Spirit flights
-            for (const event of calendarEvents) {
+            calendarEvents.forEach(event => {
                 const summary = event.summary || '';
                 const flightMatch = summary.match(/(\d{4})/);
-                if (!flightMatch) continue;
+                if (!flightMatch) return;
                 const flightNum = flightMatch[1];
-                const callsign = 'NKS' + flightNum;
+                const callsign = `NKS${flightNum}`; // Spirit ICAO
 
-                try {
-                    const resObj = await safeFetchJson(`https://adsbexchange.com/api/aircraft/call/${callsign}/`, callsign);
-
-                    // If ADSBExchange returned NO_AUTH or no data, try OpenSky fallback
-                    if (!resObj.data) {
-                        if (resObj.error === 'NO_AUTH') {
-                            console.warn(`ADSBExchange NO_AUTH for ${callsign} — trying OpenSky fallback`);
-                        } else {
-                            console.log(`No JSON data for ${callsign} from ADSBExchange (status ${resObj.status}) — trying OpenSky fallback`);
-                        }
-
-                        try {
-                            const osRes = await safeFetchJson(`https://opensky-network.org/api/states/all?callsign=${callsign}`, 'OpenSky:' + callsign);
-                            if (osRes.data && Array.isArray(osRes.data.states) && osRes.data.states.length > 0) {
-                                const state = osRes.data.states[0];
-                                const lon = state[5];
-                                const lat = state[6];
-                                if (lat && lon) {
-                                    addMarker(lat, lon, {
-                                        title: callsign + ' (OpenSky)',
-                                        desc: summary + ' (from OpenSky)',
-                                        tail: 'Unknown',
-                                        alt: state[7] ? Math.round(state[7] * 3.28) + ' ft' : '?',
-                                        spd: state[9] || '?'
-                                    });
-                                    bounds.extend([lat, lon]);
-                                    aircraftFound = true;
-                                    continue; // processed this flight
-                                }
-                            } else {
-                                console.log(`OpenSky had no data for ${callsign} (status ${osRes.status})`);
-                            }
-                        } catch (e) {
-                            console.error(`OpenSky fallback failed for ${callsign}:`, e.message || e);
-                        }
-
-                        // No data from either source — continue to next flight
-                        continue;
-                    }
-
-                    const data = resObj.data;
-                    console.log(`Result for ${callsign}:`, data);
-
-                    const ac = data.acList?.[0];
-                    if (ac && ac.Lat && ac.Long) {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: callsign,
-                            desc: summary,
-                            tail: ac.Reg || 'Unknown',
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    }
-                } catch (e) {
-                    console.log(`Fetch/parse failed for ${callsign}:`, e.message || e);
+                const state = data.states?.find(s => s[1]?.trim() === callsign);
+                if (state && state[6] != null && state[5] != null) {
+                    addMarker(state[6], state[5], {
+                        title: callsign,
+                        desc: summary,
+                        tail: state[2] || 'Unknown', // ICAO24
+                        alt: state[13] != null ? Math.round(state[13] * 3.28) + ' ft' : '?',
+                        spd: state[9] != null ? Math.round(state[9]) + ' kt' : '?'
+                    });
+                    bounds.extend([state[6], state[5]]);
+                    aircraftFound = true;
                 }
-            }
+            });
+        } catch (e) {
+            console.log('OpenSky fetch failed:', e.message);
+        }
+    }
 
-            // Friend tails
-            for (const friend of FRIEND_TAILS) {
-                try {
-                    const resObj = await safeFetchJson(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`, friend.tail);
-                    if (!resObj.data) {
-                        console.log(`No JSON data for ${friend.tail} (status ${resObj.status})`);
-                        continue;
-                    }
+    // 2. Friend tails (keep using ADS-B Exchange reg lookup - usually works)
+    for (const friend of FRIEND_TAILS) {
+        try {
+            const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
+            const contentType = res.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) continue;
 
-                    const data = resObj.data;
-                    const ac = data.acList?.[0];
-                    if (ac && ac.Lat && ac.Long) {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: friend.name,
-                            desc: 'Friend aircraft',
-                            tail: friend.tail,
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    }
-                } catch (e) {
-                    console.error(`Fetch/parse failed for friend ${friend.tail}:`, e);
-                }
+            const data = await res.json();
+            const ac = data.acList?.[0];
+            if (ac && ac.Lat && ac.Long) {
+                addMarker(ac.Lat, ac.Long, {
+                    title: friend.name,
+                    desc: 'Friend aircraft',
+                    tail: friend.tail,
+                    alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                    spd: ac.Spd || '?'
+                });
+                bounds.extend([ac.Lat, ac.Long]);
+                aircraftFound = true;
             }
+        } catch (e) {}
+    }
+
+    // Smart zoom
+    if (aircraftFound) {
+        flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
+    } else {
+        flightMap.setView([42.3314, -83.0458], 7); // Detroit fallback
+    }
+}
 
             if (aircraftFound) {
                 flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
