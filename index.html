@@ -178,7 +178,12 @@
     const callsign = 'NKS' + flightNum;
 
     try {
-        const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
+        const res = await fetch(`https://opensky-network.org/api/states/all?callsign=${callsign}`);
+const data = await res.json();
+const state = data.states?.find(s => s[1] === callsign || s[1] === callsign.padEnd(8, ' '));
+if (state && state[6] && state[5]) { // lat, lon
+    addMarker(state[6], state[5], { ... });
+}
         
         // Check if response is actually JSON
         const contentType = res.headers.get('content-type');
