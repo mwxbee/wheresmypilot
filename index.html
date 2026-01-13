@@ -26,7 +26,7 @@
 
     <div id="content">Loading Google services... Click Authorize when ready.</div>
 
-    <h2>Live Aircraft Map (Spirit + Friends + Epic)</h2>
+    <h2>Live Spirit & Friend Aircraft Map</h2>
     <div id="map"></div>
 
     <!-- Google scripts -->
@@ -45,9 +45,8 @@
             { tail: 'N4303B', name: 'DOLLY' }
         ];
 
-        // ICAO types to always show (Epic LT)
-        const ICAO_TYPES_TO_SHOW = [];  // Add more codes here if you want, e.g. ['EPIC', 'B738']
-        const MAX_AIRCRAFT_PER_TYPE = 50;     // Safety limit to avoid map overload
+        // Disabled Epic/global fetch (CORS issue)
+        const ICAO_TYPES_TO_SHOW = [];  // Leave empty
 
         let tokenClient;
         let gapiReady = false;
@@ -120,7 +119,7 @@
                 const response = await gapi.client.calendar.events.list(request);
                 let events = response.result.items || [];
 
-                // Filter to Spirit flights (events with 4-digit number)
+                // Filter to events with 4-digit flight number (Spirit format)
                 events = events.filter(event => {
                     const summary = event.summary || '';
                     return /\d{4}/.test(summary);
@@ -142,6 +141,7 @@
 
                 document.getElementById('content').innerText = output;
 
+                // Pass the filtered events to map update
                 updateAllAircraftOnMap(events);
 
                 if (!window.refreshInterval) {
@@ -156,13 +156,20 @@
         }
 
         async function updateAllAircraftOnMap(calendarEvents) {
+            // Safety guard: ensure calendarEvents is always an array
+            if (!Array.isArray(calendarEvents)) {
+                console.warn('calendarEvents was not an array:', calendarEvents);
+                calendarEvents = [];
+            }
+
+            // Clear old markers
             Object.values(markers).forEach(m => flightMap.removeLayer(m));
             markers = {};
 
             const bounds = L.latLngBounds();
             let aircraftFound = false;
 
-            // 1. Spirit flights from calendar (add NKS prefix)
+            // Spirit flights from calendar (add NKS prefix)
             for (const event of calendarEvents) {
                 const summary = event.summary || '';
                 const flightMatch = summary.match(/(\d{4})/);
@@ -173,6 +180,8 @@
                 try {
                     const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
                     const data = await res.json();
+                    console.log(`Fetch result for ${callsign}:`, data);  // Debug: see API response
+
                     const ac = data.acList?.[0];
                     if (ac && ac.Lat && ac.Long) {
                         addMarker(ac.Lat, ac.Long, {
@@ -184,13 +193,15 @@
                         });
                         bounds.extend([ac.Lat, ac.Long]);
                         aircraftFound = true;
+                    } else {
+                        console.log(`No match for ${callsign} in acList`);
                     }
                 } catch (e) {
-                    console.log(`No live data for ${callsign}`);
+                    console.log(`Fetch failed for ${callsign}:`, e.message);
                 }
             }
 
-            // 2. Friend tails
+            // Friend tails
             for (const friend of FRIEND_TAILS) {
                 try {
                     const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
@@ -210,36 +221,11 @@
                 } catch (e) {}
             }
 
-            // 3. All aircraft of selected ICAO types (Epic LT)
-            for (const icaoType of ICAO_TYPES_TO_SHOW) {
-                try {
-                    const res = await fetch('https://public-api.adsbexchange.com/VirtualRadar/AircraftList.json');
-                    const data = await res.json();
-                    const allAircraft = data.acList || [];
-                    const filtered = allAircraft.filter(ac => ac.t === icaoType && ac.Lat && ac.Long);
-                    const limited = filtered.slice(0, MAX_AIRCRAFT_PER_TYPE);
-
-                    limited.forEach(ac => {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: `${icaoType} Aircraft`,
-                            desc: ac.Ctr || 'Unknown route',
-                            tail: ac.Reg || 'Unknown',
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    });
-                } catch (e) {
-                    console.log(`Failed to load ${icaoType} aircraft`);
-                }
-            }
-
-            // Smart zoom to fit everything
+            // Smart zoom
             if (aircraftFound) {
                 flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
             } else {
-                flightMap.setView([42.3314, -83.0458], 7); // Detroit area fallback
+                flightMap.setView([42.3314, -83.0458], 7); // Detroit area
             }
         }
 
