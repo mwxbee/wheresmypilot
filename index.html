@@ -24,7 +24,7 @@
     <button id="authorize_button" disabled>Authorize with Google</button>
     <button id="signout_button" class="hidden">Sign Out</button>
 
-    <div id="content">Loading Google services... Click Authorize when ready.</div>
+    <div id="content">Loading Google services... please wait.</div>
 
     <h2>Live Spirit & Friend Aircraft Map</h2>
     <div id="map"></div>
@@ -35,18 +35,15 @@
 
     <script>
         const CLIENT_ID = '961392156388-9r17ndoonmu4kvj7v3lrvtpm8ooipa7o.apps.googleusercontent.com';
-        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI'; // ← Replace with your actual key
+        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI'; // ← Replace this!
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
         const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 
-        // Friend/family tail numbers + names
+        // Friend tails
         const FRIEND_TAILS = [
             { tail: 'N114JD', name: 'N114JD' },
             { tail: 'N4303B', name: 'DOLLY' }
         ];
-
-        // Disabled Epic/global fetch (CORS issue)
-        const ICAO_TYPES_TO_SHOW = [];  // Leave empty
 
         let tokenClient;
         let gapiReady = false;
@@ -55,20 +52,21 @@
         let markers = {};
 
         function initMap() {
-            flightMap = L.map('map').setView([42.3314, -83.0458], 7); // Detroit area
+            flightMap = L.map('map').setView([42.3314, -83.0458], 7);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
+                attribution: '© OpenStreetMap'
             }).addTo(flightMap);
         }
 
         function checkReady() {
             if (gapiReady && gisReady) {
                 document.getElementById('authorize_button').disabled = false;
-                document.getElementById('content').innerText = 'Ready! Click Authorize to load Spirit flights.';
+                document.getElementById('content').innerText = 'Google services ready! Click Authorize to load flights.';
             }
         }
 
         function gapiLoaded() {
+            console.log('gapi script loaded');
             gapi.load('client', async () => {
                 try {
                     await gapi.client.init({
@@ -80,18 +78,20 @@
                     checkReady();
                 } catch (err) {
                     console.error('gapi init failed:', err);
-                    document.getElementById('content').innerText = 'API client init failed: ' + err.message;
+                    document.getElementById('content').innerText = 'Google API init failed: ' + err.message;
                 }
             });
         }
 
         function gisLoaded() {
+            console.log('GIS script loaded');
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: CLIENT_ID,
                 scope: SCOPES,
                 callback: async (resp) => {
                     if (resp.error) {
-                        document.getElementById('content').innerText = 'Auth failed: ' + resp.error;
+                        document.getElementById('content').innerText = 'Authorization failed: ' + resp.error;
+                        console.error('Token error:', resp);
                         return;
                     }
                     document.getElementById('signout_button').classList.remove('hidden');
@@ -119,107 +119,92 @@
                 const response = await gapi.client.calendar.events.list(request);
                 let events = response.result.items || [];
 
-                // Filter to events with 4-digit flight number (Spirit format)
-                events = events.filter(event => {
-                    const summary = event.summary || '';
-                    return /\d{4}/.test(summary);
-                });
+                // Filter for 4-digit flight numbers (Spirit format)
+                events = events.filter(event => /\d{4}/.test(event.summary || ''));
 
                 let output = events.length === 0 
-                    ? 'No Spirit flights found in the calendar.' 
+                    ? 'No Spirit flights found in calendar.' 
                     : 'Upcoming Spirit Flights:\n\n';
 
-                if (events.length > 0) {
-                    events.forEach(event => {
-                        const start = event.start?.dateTime
-                            ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                            : event.start?.date || 'No date';
-                        output += `✈️ ${event.summary || 'Spirit Flight'} - ${start}\n`;
-                        if (event.description) output += `Details: ${event.description}\n\n`;
-                    });
-                }
+                events.forEach(event => {
+                    const start = event.start?.dateTime
+                        ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                        : event.start?.date || 'No date';
+                    output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+                    if (event.description) output += `Details: ${event.description}\n\n`;
+                });
 
                 document.getElementById('content').innerText = output;
 
-                // Pass the filtered events to map update
                 updateAllAircraftOnMap(events);
 
                 if (!window.refreshInterval) {
                     window.refreshInterval = setInterval(listUpcomingEvents, 300000);
-                    console.log('Auto-refresh started: every 5 minutes');
+                    console.log('Auto-refresh every 5 min started');
                 }
 
             } catch (err) {
-                document.getElementById('content').innerText = 'Error loading flights: ' + (err.message || 'Unknown error');
-                console.error('Calendar API error:', err);
+                document.getElementById('content').innerText = 'Error loading flights: ' + err.message;
+                console.error('Calendar error:', err);
             }
         }
 
         async function updateAllAircraftOnMap(calendarEvents) {
-            // Safety guard: ensure calendarEvents is always an array
             if (!Array.isArray(calendarEvents)) {
-                console.warn('calendarEvents was not an array:', calendarEvents);
+                console.warn('calendarEvents not array:', calendarEvents);
                 calendarEvents = [];
             }
 
-            // Clear old markers
             Object.values(markers).forEach(m => flightMap.removeLayer(m));
             markers = {};
 
             const bounds = L.latLngBounds();
             let aircraftFound = false;
 
-            // Spirit flights from calendar (add NKS prefix)
+            // Spirit flights
             for (const event of calendarEvents) {
-    const summary = event.summary || '';
-    const flightMatch = summary.match(/(\d{4})/);
-    if (!flightMatch) continue;
-    const flightNum = flightMatch[1];
-    const callsign = 'NKS' + flightNum;
+                const summary = event.summary || '';
+                const flightMatch = summary.match(/(\d{4})/);
+                if (!flightMatch) continue;
+                const flightNum = flightMatch[1];
+                const callsign = 'NKS' + flightNum;
 
-    try {
-        const res = await fetch(`https://opensky-network.org/api/states/all?callsign=${callsign}`);
-const data = await res.json();
-const state = data.states?.find(s => s[1] === callsign || s[1] === callsign.padEnd(8, ' '));
-if (state && state[6] && state[5]) { // lat, lon
-    addMarker(state[6], state[5], { ... });
-}
-        
-        // Check if response is actually JSON
-        const contentType = res.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            console.log(`Non-JSON response for ${callsign}: ${contentType || 'no content-type'}`);
-            const text = await res.text();
-            console.log(`Response body: ${text.substring(0, 100)}...`); // Preview
-            continue; // Skip
-        }
+                try {
+                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
+                    const contentType = res.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await res.text();
+                        console.log(`Non-JSON for ${callsign}: ${text.substring(0, 100)}...`);
+                        continue;
+                    }
 
-        const data = await res.json();
-        console.log(`Fetch result for ${callsign}:`, data);
+                    const data = await res.json();
+                    console.log(`Result for ${callsign}:`, data);
 
-        const ac = data.acList?.[0];
-        if (ac && ac.Lat && ac.Long) {
-            addMarker(ac.Lat, ac.Long, {
-                title: callsign,
-                desc: summary,
-                tail: ac.Reg || 'Unknown',
-                alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                spd: ac.Spd || '?'
-            });
-            bounds.extend([ac.Lat, ac.Long]);
-            aircraftFound = true;
-        } else {
-            console.log(`No aircraft match for ${callsign}`);
-        }
-    } catch (e) {
-        console.log(`Fetch or parse failed for ${callsign}:`, e.message);
-    }
-}
+                    const ac = data.acList?.[0];
+                    if (ac && ac.Lat && ac.Long) {
+                        addMarker(ac.Lat, ac.Long, {
+                            title: callsign,
+                            desc: summary,
+                            tail: ac.Reg || 'Unknown',
+                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                            spd: ac.Spd || '?'
+                        });
+                        bounds.extend([ac.Lat, ac.Long]);
+                        aircraftFound = true;
+                    }
+                } catch (e) {
+                    console.log(`Fetch/parse failed for ${callsign}:`, e.message);
+                }
+            }
 
-            // Friend tails
+            // Friends
             for (const friend of FRIEND_TAILS) {
                 try {
                     const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
+                    const contentType = res.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) continue;
+
                     const data = await res.json();
                     const ac = data.acList?.[0];
                     if (ac && ac.Lat && ac.Long) {
@@ -240,7 +225,7 @@ if (state && state[6] && state[5]) { // lat, lon
             if (aircraftFound) {
                 flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
             } else {
-                flightMap.setView([42.3314, -83.0458], 7); // Detroit area
+                flightMap.setView([42.3314, -83.0458], 7);
             }
         }
 
@@ -260,9 +245,11 @@ if (state && state[6] && state[5]) { // lat, lon
             markers[key] = marker;
         }
 
-        // Button handlers
         document.getElementById('authorize_button').onclick = () => {
-            if (!gapiReady || !gisReady) return alert('Still loading...');
+            if (!gapiReady || !gisReady) {
+                alert('Google services still loading - wait a moment.');
+                return;
+            }
             tokenClient.requestAccessToken({prompt: ''});
         };
 
