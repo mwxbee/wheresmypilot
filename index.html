@@ -171,19 +171,52 @@
     const callsign = 'NKS' + flightNum;
 
     try {
-    const res = await fetch(`https://opensky-network.org/api/states/all?callsign=${callsign}`);
+    // Bounding box around continental US (adjust if needed for better performance)
+    const params = new URLSearchParams({
+        lamin: '24.0',
+        lamax: '49.0',
+        lomin: '-125.0',
+        lomax: '-66.0'
+    });
+
+    const res = await fetch(`https://opensky-network.org/api/states/all?${params}`);
     const data = await res.json();
-    const state = data.states?.find(s => s[1]?.trim() === callsign);
-    if (state && state[6] && state[5]) { // lat, lon
+
+    console.log('OpenSky full states response:', data);
+
+    // Find matching callsign (trimmed, case-insensitive)
+    const targetCallsign = callsign.trim().toUpperCase();
+    const state = data.states?.find(s => s[1]?.trim().toUpperCase() === targetCallsign);
+
+    if (state && state[6] != null && state[5] != null) {
+        addMarker(state[6], state[5], {
+            title: callsign,
+            desc: summary,
+            tail: state[2] || 'Unknown', // ICAO24 hex
+            alt: state[13] != null ? Math.round(state[13] * 3.28) + ' ft' : '?',
+            spd: state[9] != null ? Math.round(state[9]) + ' kt' : '?'
+        });
+        bounds.extend([state[6], state[5]]);
+        aircraftFound = true;
+    } else {
+        console.log(`OpenSky: No match for ${callsign}`);
+    }
+} catch (e) {
+    console.log(`OpenSky fetch failed for ${callsign}:`, e.message);
+}
+
+    if (state && state[6] != null && state[5] != null) { // lat = state[6], lon = state[5]
         addMarker(state[6], state[5], {
             title: callsign,
             desc: summary,
             tail: state[2] || 'Unknown', // ICAO hex
-            alt: state[13] ? Math.round(state[13] * 3.28) + ' ft' : '?',
-            spd: state[9] ? Math.round(state[9]) + ' kt' : '?'
+            alt: state[13] != null ? Math.round(state[13] * 3.28) + ' ft' : '?',
+            spd: state[9] != null ? Math.round(state[9]) + ' kt' : '?'
         });
         bounds.extend([state[6], state[5]]);
         aircraftFound = true;
+    } else {
+        console.log(`OpenSky: No match for ${callsign} (padded or unpadded)`);
     }
 } catch (e) {
     console.log(`OpenSky fetch failed for ${callsign}:`, e.message);
