@@ -163,40 +163,41 @@
 
             // Spirit flights
             for (const event of calendarEvents) {
-                const summary = event.summary || '';
-                const flightMatch = summary.match(/(\d{4})/);
-                if (!flightMatch) continue;
-                const flightNum = flightMatch[1];
-                const callsign = 'NKS' + flightNum;
+    const summary = event.summary || '';
+    const flightMatch = summary.match(/(\d{4})/);
+    if (!flightMatch) continue;
+    const flightNum = flightMatch[1];
+    const callsign = 'NKS' + flightNum;
 
-                try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
-                    const contentType = res.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) {
-                        const text = await res.text();
-                        console.log(`Non-JSON for ${callsign}: ${text.substring(0, 100)}...`);
-                        continue;
-                    }
+    try {
+        const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
 
-                    const data = await res.json();
-                    console.log(`Result for ${callsign}:`, data);
+        // Check content type first
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            // Non-JSON = no aircraft or error → skip silently
+            continue;
+        }
 
-                    const ac = data.acList?.[0];
-                    if (ac && ac.Lat && ac.Long) {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: callsign,
-                            desc: summary,
-                            tail: ac.Reg || 'Unknown',
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    }
-                } catch (e) {
-                    console.log(`Fetch/parse failed for ${callsign}:`, e.message);
-                }
-            }
+        const data = await res.json();
+
+        const ac = data.acList?.[0];
+        if (ac && ac.Lat && ac.Long) {
+            addMarker(ac.Lat, ac.Long, {
+                title: callsign,
+                desc: summary,
+                tail: ac.Reg || 'Unknown',
+                alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                spd: ac.Spd || '?'
+            });
+            bounds.extend([ac.Lat, ac.Long]);
+            aircraftFound = true;
+        }
+    } catch (e) {
+        // Silent fail - don't clutter console in production
+        // console.log(`Fetch/parse failed for ${callsign}:`, e.message);
+    }
+}
 
             // Friends
             for (const friend of FRIEND_TAILS) {
