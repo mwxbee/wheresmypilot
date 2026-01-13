@@ -4,53 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>Where's My Pilot - Family Tracker</title>
+    <title>Where's My Pilot - Spirit Tracker</title>
     <!-- Leaflet map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #000;
-            color: #0f0;
-            margin: 0;
-            padding: 15px;
-            text-align: center;
-        }
+        body { font-family: Arial, sans-serif; background: #000; color: #0f0; margin: 0; padding: 15px; text-align: center; }
         h1 { color: #fff; margin: 10px 0; font-size: 1.8em; }
         button { margin: 8px; padding: 10px 20px; font-size: 1.1em; cursor: pointer; }
-        #content {
-            white-space: pre-wrap;
-            background: #111;
-            padding: 15px;
-            border-radius: 8px;
-            max-width: 900px;
-            margin: 15px auto;
-            text-align: left;
-            font-size: 1.1em;
-            line-height: 1.5;
-        }
-        #map {
-            height: 70vh;           /* 70% of viewport height - good for iPad/phone */
-            min-height: 400px;
-            margin: 20px auto;
-            max-width: 100%;
-            border: 2px solid #333;
-            border-radius: 8px;
-        }
+        #content { white-space: pre-wrap; background: #111; padding: 15px; border-radius: 8px; max-width: 900px; margin: 15px auto; text-align: left; font-size: 1.1em; line-height: 1.5; }
+        #map { height: 70vh; min-height: 400px; margin: 20px auto; max-width: 100%; border: 2px solid #333; border-radius: 8px; }
         .hidden { display: none; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         h2 { color: #fff; margin: 25px 0 10px; font-size: 1.5em; }
     </style>
 </head>
 <body>
-    <h1>Where's My Pilot - Family Tracker</h1>
+    <h1>Where's My Pilot - Spirit Tracker</h1>
     <button id="authorize_button" disabled>Authorize with Google</button>
     <button id="signout_button" class="hidden">Sign Out</button>
 
     <div id="content">Loading Google services... Click Authorize when ready.</div>
 
-    <h2>Live Aircraft Map</h2>
+    <h2>Live Aircraft Map (Spirit + Friends + Epic)</h2>
     <div id="map"></div>
 
     <!-- Google scripts -->
@@ -63,14 +39,16 @@
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
         const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 
-        // Friend/family tail numbers + friendly names
+        // Friend/family tail numbers + names
         const FRIEND_TAILS = [
-            { tail: 'N4303B', name: 'DOLLY' },
-            { tail: 'N14JD', name: 'N14JD' },
-            { tail: 'N11DG', name: 'N174AC' }
-            { tail: 'N174AC', name: 'N174AC' }
+            { tail: 'N114JD', name: 'N114JD' },
+            { tail: 'N4303B', name: 'DOLLY' }
         ];
-        
+
+        // ICAO types to always show (Epic LT)
+        const ICAO_TYPES_TO_SHOW = ['EPIC'];  // Add more codes here if you want, e.g. ['EPIC', 'B738']
+        const MAX_AIRCRAFT_PER_TYPE = 50;     // Safety limit to avoid map overload
+
         let tokenClient;
         let gapiReady = false;
         let gisReady = false;
@@ -78,16 +56,16 @@
         let markers = {};
 
         function initMap() {
-            flightMap = L.map('map').setView([42.3314, -83.0458], 7); // Detroit area start
+            flightMap = L.map('map').setView([42.3314, -83.0458], 7); // Detroit area
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap contributors'
+                attribution: '© OpenStreetMap contributors'
             }).addTo(flightMap);
         }
 
         function checkReady() {
             if (gapiReady && gisReady) {
                 document.getElementById('authorize_button').disabled = false;
-                document.getElementById('content').innerText = 'Ready! Click Authorize to load your flights.';
+                document.getElementById('content').innerText = 'Ready! Click Authorize to load Spirit flights.';
             }
         }
 
@@ -140,16 +118,24 @@
                 };
 
                 const response = await gapi.client.calendar.events.list(request);
-                const events = response.result.items || [];
+                let events = response.result.items || [];
 
-                let output = events.length === 0 ? 'No upcoming flights found.' : 'Upcoming Flights:\n\n';
+                // Filter to Spirit flights (events with 4-digit number)
+                events = events.filter(event => {
+                    const summary = event.summary || '';
+                    return /\d{4}/.test(summary);
+                });
+
+                let output = events.length === 0 
+                    ? 'No Spirit flights found in the calendar.' 
+                    : 'Upcoming Spirit Flights:\n\n';
 
                 if (events.length > 0) {
                     events.forEach(event => {
                         const start = event.start?.dateTime
                             ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                             : event.start?.date || 'No date';
-                        output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+                        output += `✈️ ${event.summary || 'Spirit Flight'} - ${start}\n`;
                         if (event.description) output += `Details: ${event.description}\n\n`;
                     });
                 }
@@ -160,37 +146,37 @@
 
                 if (!window.refreshInterval) {
                     window.refreshInterval = setInterval(listUpcomingEvents, 300000);
-                    console.log('Auto-refresh every 5 min started');
+                    console.log('Auto-refresh started: every 5 minutes');
                 }
 
             } catch (err) {
                 document.getElementById('content').innerText = 'Error loading flights: ' + (err.message || 'Unknown error');
-                console.error(err);
+                console.error('Calendar API error:', err);
             }
         }
 
         async function updateAllAircraftOnMap(calendarEvents) {
-            // Clear existing markers
             Object.values(markers).forEach(m => flightMap.removeLayer(m));
             markers = {};
 
-            const bounds = L.latLngBounds(); // To fit all aircraft
+            const bounds = L.latLngBounds();
             let aircraftFound = false;
 
-            // 1. Calendar flights (by flight number)
+            // 1. Spirit flights from calendar (add NKS prefix)
             for (const event of calendarEvents) {
                 const summary = event.summary || '';
-                const flightMatch = summary.match(/^(\d{3,4})/) || summary.match(/(\d{3,4})/);
+                const flightMatch = summary.match(/(\d{4})/);
                 if (!flightMatch) continue;
                 const flightNum = flightMatch[1];
+                const callsign = 'NKS' + flightNum;
 
                 try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${flightNum}/`);
+                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
                     const data = await res.json();
                     const ac = data.acList?.[0];
                     if (ac && ac.Lat && ac.Long) {
                         addMarker(ac.Lat, ac.Long, {
-                            title: flightNum,
+                            title: callsign,
                             desc: summary,
                             tail: ac.Reg || 'Unknown',
                             alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
@@ -199,10 +185,12 @@
                         bounds.extend([ac.Lat, ac.Long]);
                         aircraftFound = true;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.log(`No live data for ${callsign}`);
+                }
             }
 
-            // 2. Always-track friend tails
+            // 2. Friend tails
             for (const friend of FRIEND_TAILS) {
                 try {
                     const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
@@ -222,11 +210,36 @@
                 } catch (e) {}
             }
 
-            // Smart zoom
+            // 3. All aircraft of selected ICAO types (Epic LT)
+            for (const icaoType of ICAO_TYPES_TO_SHOW) {
+                try {
+                    const res = await fetch('https://public-api.adsbexchange.com/VirtualRadar/AircraftList.json');
+                    const data = await res.json();
+                    const allAircraft = data.acList || [];
+                    const filtered = allAircraft.filter(ac => ac.t === icaoType && ac.Lat && ac.Long);
+                    const limited = filtered.slice(0, MAX_AIRCRAFT_PER_TYPE);
+
+                    limited.forEach(ac => {
+                        addMarker(ac.Lat, ac.Long, {
+                            title: `${icaoType} Aircraft`,
+                            desc: ac.Ctr || 'Unknown route',
+                            tail: ac.Reg || 'Unknown',
+                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                            spd: ac.Spd || '?'
+                        });
+                        bounds.extend([ac.Lat, ac.Long]);
+                        aircraftFound = true;
+                    });
+                } catch (e) {
+                    console.log(`Failed to load ${icaoType} aircraft`);
+                }
+            }
+
+            // Smart zoom to fit everything
             if (aircraftFound) {
-                flightMap.fitBounds(bounds, { padding: [50, 50] }); // Nice padding around markers
+                flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
             } else {
-                flightMap.setView([42.3314, -83.0458], 7); // Reset to Detroit area
+                flightMap.setView([42.3314, -83.0458], 7); // Detroit area fallback
             }
         }
 
@@ -260,10 +273,9 @@
             document.getElementById('signout_button').classList.add('hidden');
         };
 
-        // Start map & friend tracking
         initMap();
-        setInterval(updateAllAircraftOnMap, 60000); // Update friends every minute
-        updateAllAircraftOnMap([]); // Initial empty call for friends
+        setInterval(updateAllAircraftOnMap, 60000);
+        updateAllAircraftOnMap([]); // Initial
     </script>
 </body>
 </html>
