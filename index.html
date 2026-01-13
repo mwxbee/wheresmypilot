@@ -5,17 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="mobile-web-app-capable" content="yes">
     <title>Where's My Pilot - Spirit Tracker</title>
-    <!-- Leaflet map -->
+
+    <!-- Leaflet -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
     <style>
         body { font-family: Arial, sans-serif; background: #000; color: #0f0; margin: 0; padding: 15px; text-align: center; }
         h1 { color: #fff; margin: 10px 0; font-size: 1.8em; }
         button { margin: 8px; padding: 10px 20px; font-size: 1.1em; cursor: pointer; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
         #content { white-space: pre-wrap; background: #111; padding: 15px; border-radius: 8px; max-width: 900px; margin: 15px auto; text-align: left; font-size: 1.1em; line-height: 1.5; }
         #map { height: 70vh; min-height: 400px; margin: 20px auto; max-width: 100%; border: 2px solid #333; border-radius: 8px; }
         .hidden { display: none; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
         h2 { color: #fff; margin: 25px 0 10px; font-size: 1.5em; }
     </style>
 </head>
@@ -35,16 +37,14 @@
 
     <script>
         const CLIENT_ID = '961392156388-9r17ndoonmu4kvj7v3lrvtpm8ooipa7o.apps.googleusercontent.com';
-        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI'; // ← Replace this!
+        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI'; // ← Replace with your actual key
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
         const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 
-        // Friend tails
         const FRIEND_TAILS = [
-    { tail: 'N114JD', name: 'N114JD' },
-    { tail: 'N4303B', name: 'DOLLY' },
-    { tail: 'N693NK', name: 'NKS1643 Test' } // temporary
-];
+            { tail: 'N114JD', name: 'N114JD' },
+            { tail: 'N4303B', name: 'DOLLY' }
+        ];
 
         let tokenClient;
         let gapiReady = false;
@@ -55,14 +55,16 @@
         function initMap() {
             flightMap = L.map('map').setView([42.3314, -83.0458], 7);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+                attribution: '© OpenStreetMap contributors'
             }).addTo(flightMap);
         }
 
         function checkReady() {
+            console.log('checkReady called - gapiReady:', gapiReady, 'gisReady:', gisReady);
             if (gapiReady && gisReady) {
                 document.getElementById('authorize_button').disabled = false;
                 document.getElementById('content').innerText = 'Google services ready! Click Authorize to load flights.';
+                console.log('Authorize button enabled');
             }
         }
 
@@ -74,7 +76,7 @@
                         apiKey: API_KEY,
                         discoveryDocs: [DISCOVERY_DOC],
                     });
-                    console.log('gapi.client initialized');
+                    console.log('gapi.client initialized successfully');
                     gapiReady = true;
                     checkReady();
                 } catch (err) {
@@ -120,7 +122,6 @@
                 const response = await gapi.client.calendar.events.list(request);
                 let events = response.result.items || [];
 
-                // Filter for 4-digit flight numbers (Spirit format)
                 events = events.filter(event => /\d{4}/.test(event.summary || ''));
 
                 let output = events.length === 0 
@@ -131,7 +132,7 @@
                     const start = event.start?.dateTime
                         ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                         : event.start?.date || 'No date';
-                    output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+                    output += `✈️ ${event.summary || 'Spirit Flight'} - ${start}\n`;
                     if (event.description) output += `Details: ${event.description}\n\n`;
                 });
 
@@ -152,7 +153,7 @@
 
         async function updateAllAircraftOnMap(calendarEvents) {
             if (!Array.isArray(calendarEvents)) {
-                console.warn('calendarEvents not array:', calendarEvents);
+                console.warn('calendarEvents not array - using empty:', calendarEvents);
                 calendarEvents = [];
             }
 
@@ -164,85 +165,42 @@
 
             // Spirit flights
             for (const event of calendarEvents) {
-    const summary = event.summary || '';
-    const flightMatch = summary.match(/(\d{4})/);
-    if (!flightMatch) continue;
-    const flightNum = flightMatch[1];
-    const callsign = 'NKS' + flightNum;
+                const summary = event.summary || '';
+                const flightMatch = summary.match(/(\d{4})/);
+                if (!flightMatch) continue;
+                const flightNum = flightMatch[1];
+                const callsign = 'NKS' + flightNum;
 
-    try {
-    // Bounding box around continental US (adjust if needed for better performance)
-    const params = new URLSearchParams({
-        lamin: '24.0',
-        lamax: '49.0',
-        lomin: '-125.0',
-        lomax: '-66.0'
-    });
+                try {
+                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
+                    const contentType = res.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        const text = await res.text();
+                        console.log(`Non-JSON for ${callsign} (${res.status}): ${text.substring(0, 100)}...`);
+                        continue;
+                    }
 
-    const res = await fetch(`https://opensky-network.org/api/states/all?${params}`);
-    const data = await res.json();
+                    const data = await res.json();
+                    console.log(`Result for ${callsign}:`, data);
 
-    console.log('OpenSky full states response:', data);
+                    const ac = data.acList?.[0];
+                    if (ac && ac.Lat && ac.Long) {
+                        addMarker(ac.Lat, ac.Long, {
+                            title: callsign,
+                            desc: summary,
+                            tail: ac.Reg || 'Unknown',
+                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                            spd: ac.Spd || '?'
+                        });
+                        bounds.extend([ac.Lat, ac.Long]);
+                        aircraftFound = true;
+                    }
+                } catch (e) {
+                    console.log(`Fetch/parse failed for ${callsign}:`, e.message);
+                }
+            }
 
-    // Find matching callsign (trimmed, case-insensitive)
-    const targetCallsign = callsign.trim().toUpperCase();
-    const state = data.states?.find(s => s[1]?.trim().toUpperCase() === targetCallsign);
-
-    if (state && state[6] != null && state[5] != null) {
-        addMarker(state[6], state[5], {
-            title: callsign,
-            desc: summary,
-            tail: state[2] || 'Unknown', // ICAO24 hex
-            alt: state[13] != null ? Math.round(state[13] * 3.28) + ' ft' : '?',
-            spd: state[9] != null ? Math.round(state[9]) + ' kt' : '?'
-        });
-        bounds.extend([state[6], state[5]]);
-        aircraftFound = true;
-    } else {
-        console.log(`OpenSky: No match for ${callsign}`);
-    }
-} catch (e) {
-    console.log(`OpenSky fetch failed for ${callsign}:`, e.message);
-}
-
-    if (state && state[6] != null && state[5] != null) { // lat = state[6], lon = state[5]
-        addMarker(state[6], state[5], {
-            title: callsign,
-            desc: summary,
-            tail: state[2] || 'Unknown', // ICAO hex
-            alt: state[13] != null ? Math.round(state[13] * 3.28) + ' ft' : '?',
-            spd: state[9] != null ? Math.round(state[9]) + ' kt' : '?'
-        });
-        bounds.extend([state[6], state[5]]);
-        aircraftFound = true;
-    } else {
-        console.log(`OpenSky: No match for ${callsign} (padded or unpadded)`);
-    }
-} catch (e) {
-    console.log(`OpenSky fetch failed for ${callsign}:`, e.message);
-}
-
-        const data = await res.json();
-
-        const ac = data.acList?.[0];
-        if (ac && ac.Lat && ac.Long) {
-            addMarker(ac.Lat, ac.Long, {
-                title: callsign,
-                desc: summary,
-                tail: ac.Reg || 'Unknown',
-                alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                spd: ac.Spd || '?'
-            });
-            bounds.extend([ac.Lat, ac.Long]);
-            aircraftFound = true;
-        }
-    } catch (e) {
-        // Silent fail - don't clutter console in production
-        // console.log(`Fetch/parse failed for ${callsign}:`, e.message);
-    }
-}
-
-            // Friends
+            // Friend tails
             for (const friend of FRIEND_TAILS) {
                 try {
                     const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
@@ -265,7 +223,6 @@
                 } catch (e) {}
             }
 
-            // Smart zoom
             if (aircraftFound) {
                 flightMap.fitBounds(bounds, { padding: [50, 50], maxZoom: 10, minZoom: 3 });
             } else {
@@ -289,6 +246,7 @@
             markers[key] = marker;
         }
 
+        // Button handlers
         document.getElementById('authorize_button').onclick = () => {
             if (!gapiReady || !gisReady) {
                 alert('Google services still loading - wait a moment.');
