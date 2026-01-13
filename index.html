@@ -151,6 +151,42 @@
             }
         }
 
+        // Safer JSON fetch helper: reads body as text, strips common XSSI prefix and attempts JSON.parse.
+        async function safeFetchJson(url, label) {
+            try {
+                const res = await fetch(url);
+                const contentType = res.headers.get('content-type') || '';
+                const text = await res.text();
+
+                // Strip common XSSI prefix like )]}'\n
+                const cleaned = text.replace(/^\)\]\}'\s*/, '');
+
+                if (!contentType.includes('application/json')) {
+                    // Still try to parse; some endpoints mis-report content-type or include XSSI prefixes
+                    try {
+                        const parsed = JSON.parse(cleaned);
+                        return { data: parsed, status: res.status, contentType, raw: text };
+                    } catch (parseErr) {
+                        console.error(`${label} - non-JSON content-type (${contentType}) and parse failed`);
+                        console.error(`${label} - response (first 2000 chars):`, text.slice(0, 2000));
+                        return { data: null, status: res.status, contentType, raw: text };
+                    }
+                }
+
+                try {
+                    const parsed = JSON.parse(cleaned);
+                    return { data: parsed, status: res.status, contentType, raw: text };
+                } catch (err) {
+                    console.error(`${label} - JSON parse failed:`, err, 'status:', res.status, 'content-type:', contentType);
+                    console.error(`${label} - response (first 2000 chars):`, text.slice(0, 2000));
+                    return { data: null, status: res.status, contentType, raw: text };
+                }
+            } catch (err) {
+                console.error(`${label} - fetch failed:`, err);
+                return { data: null, status: null, contentType: '', raw: '' };
+            }
+        }
+
         async function updateAllAircraftOnMap(calendarEvents) {
             if (!Array.isArray(calendarEvents)) {
                 console.warn('calendarEvents not array - using empty:', calendarEvents);
@@ -172,15 +208,13 @@
                 const callsign = 'NKS' + flightNum;
 
                 try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
-                    const contentType = res.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) {
-                        const text = await res.text();
-                        console.log(`Non-JSON for ${callsign} (${res.status}): ${text.substring(0, 100)}...`);
+                    const resObj = await safeFetchJson(`https://adsbexchange.com/api/aircraft/call/${callsign}/`, callsign);
+                    if (!resObj.data) {
+                        console.log(`No JSON data for ${callsign} (status ${resObj.status})`);
                         continue;
                     }
 
-                    const data = await res.json();
+                    const data = resObj.data;
                     console.log(`Result for ${callsign}:`, data);
 
                     const ac = data.acList?.[0];
@@ -203,11 +237,13 @@
             // Friend tails
             for (const friend of FRIEND_TAILS) {
                 try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
-                    const contentType = res.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) continue;
+                    const resObj = await safeFetchJson(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`, friend.tail);
+                    if (!resObj.data) {
+                        console.log(`No JSON data for ${friend.tail} (status ${resObj.status})`);
+                        continue;
+                    }
 
-                    const data = await res.json();
+                    const data = resObj.data;
                     const ac = data.acList?.[0];
                     if (ac && ac.Lat && ac.Long) {
                         addMarker(ac.Lat, ac.Long, {
@@ -220,7 +256,9 @@
                         bounds.extend([ac.Lat, ac.Long]);
                         aircraftFound = true;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.error(`Fetch/parse failed for friend ${friend.tail}:`, e);
+                }
             }
 
             if (aircraftFound) {
