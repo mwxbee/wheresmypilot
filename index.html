@@ -3,42 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="mobile-web-app-capable" content="yes"> <!-- Updated meta as per warning -->
-    <title>Where's My Pilot</title>
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Where's My Pilot - Family Tracker</title>
+    <!-- Leaflet map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: #000; color: #0f0; margin: 0; padding: 20px; text-align: center; }
-        h1 { color: #fff; }
-        button { margin: 10px; padding: 12px 24px; font-size: 16px; cursor: pointer; }
-        #content { white-space: pre-wrap; background: #111; padding: 20px; border-radius: 8px; max-width: 800px; margin: 20px auto; text-align: left; font-size: 16px; line-height: 1.5; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: #0f0;
+            margin: 0;
+            padding: 15px;
+            text-align: center;
+        }
+        h1 { color: #fff; margin: 10px 0; font-size: 1.8em; }
+        button { margin: 8px; padding: 10px 20px; font-size: 1.1em; cursor: pointer; }
+        #content {
+            white-space: pre-wrap;
+            background: #111;
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 15px auto;
+            text-align: left;
+            font-size: 1.1em;
+            line-height: 1.5;
+        }
+        #map {
+            height: 70vh;           /* 70% of viewport height - good for iPad/phone */
+            min-height: 400px;
+            margin: 20px auto;
+            max-width: 100%;
+            border: 2px solid #333;
+            border-radius: 8px;
+        }
         .hidden { display: none; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
+        h2 { color: #fff; margin: 25px 0 10px; font-size: 1.5em; }
     </style>
 </head>
 <body>
-    <h1>Where's My Pilot - Flight Status</h1>
+    <h1>Where's My Pilot - Family Tracker</h1>
     <button id="authorize_button" disabled>Authorize with Google</button>
     <button id="signout_button" class="hidden">Sign Out</button>
 
     <div id="content">Loading Google services... Click Authorize when ready.</div>
+
+    <h2>Live Aircraft Map</h2>
+    <div id="map"></div>
 
     <!-- Google scripts -->
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
     <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 
     <script>
-        const CLIENT_ID = '961392156388-9r17ndoonmu4kvj7v3lrvtpm8ooipa7o.apps.googleusercontent.com';
-        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI';  // ← Replace with your actual AIzaSy... key!
+        const CLIENT_ID = '876006485542-j74gnbbdajs7r24llvoo3aqgodkbq3a7.apps.googleusercontent.com';
+        const API_KEY = 'AIzaSyD7sKjm4XmJSPxq3iNfa-GF53J-F4UovHI'; // ← Replace with your actual key
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
         const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
+
+        // Friend/family tail numbers + friendly names
+        const FRIEND_TAILS = [
+            { tail: 'N4303B', name: 'DOLLY' },
+            { tail: 'N14JD', name: 'N14JD' },
+            { tail: 'N174AC', name: 'N174AC' }
+        ];
 
         let tokenClient;
         let gapiReady = false;
         let gisReady = false;
+        let flightMap;
+        let markers = {};
+
+        function initMap() {
+            flightMap = L.map('map').setView([42.3314, -83.0458], 7); // Detroit area start
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(flightMap);
+        }
 
         function checkReady() {
             if (gapiReady && gisReady) {
                 document.getElementById('authorize_button').disabled = false;
-                document.getElementById('content').innerText = 'Google services ready! Click Authorize to load flights.';
+                document.getElementById('content').innerText = 'Ready! Click Authorize to load your flights.';
             }
         }
 
@@ -49,12 +97,12 @@
                         apiKey: API_KEY,
                         discoveryDocs: [DISCOVERY_DOC],
                     });
-                    console.log('gapi.client initialized successfully');
+                    console.log('gapi.client initialized');
                     gapiReady = true;
                     checkReady();
                 } catch (err) {
                     console.error('gapi init failed:', err);
-                    document.getElementById('content').innerText = 'Failed to initialize Google API client: ' + err.message;
+                    document.getElementById('content').innerText = 'API client init failed: ' + err.message;
                 }
             });
         }
@@ -65,8 +113,7 @@
                 scope: SCOPES,
                 callback: async (resp) => {
                     if (resp.error) {
-                        document.getElementById('content').innerText = 'Authorization failed: ' + resp.error;
-                        console.error('Token error:', resp);
+                        document.getElementById('content').innerText = 'Auth failed: ' + resp.error;
                         return;
                     }
                     document.getElementById('signout_button').classList.remove('hidden');
@@ -78,75 +125,144 @@
             checkReady();
         }
 
-        function handleAuthClick() {
-            if (!gapiReady || !gisReady) {
-                alert('Google services still loading - please wait a moment.');
-                return;
+        async function listUpcomingEvents() {
+            try {
+                if (!gapi.client || !gapi.client.calendar) throw new Error('API client not ready');
+
+                const request = {
+                    calendarId: '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
+                    timeMin: (new Date()).toISOString(),
+                    showDeleted: false,
+                    singleEvents: true,
+                    maxResults: 20,
+                    orderBy: 'startTime'
+                };
+
+                const response = await gapi.client.calendar.events.list(request);
+                const events = response.result.items || [];
+
+                let output = events.length === 0 ? 'No upcoming flights found.' : 'Upcoming Flights:\n\n';
+
+                if (events.length > 0) {
+                    events.forEach(event => {
+                        const start = event.start?.dateTime
+                            ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                            : event.start?.date || 'No date';
+                        output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
+                        if (event.description) output += `Details: ${event.description}\n\n`;
+                    });
+                }
+
+                document.getElementById('content').innerText = output;
+
+                updateAllAircraftOnMap(events);
+
+                if (!window.refreshInterval) {
+                    window.refreshInterval = setInterval(listUpcomingEvents, 300000);
+                    console.log('Auto-refresh every 5 min started');
+                }
+
+            } catch (err) {
+                document.getElementById('content').innerText = 'Error loading flights: ' + (err.message || 'Unknown error');
+                console.error(err);
             }
-            tokenClient.requestAccessToken({prompt: ''});
         }
 
-        function handleSignoutClick() {
+        async function updateAllAircraftOnMap(calendarEvents) {
+            // Clear existing markers
+            Object.values(markers).forEach(m => flightMap.removeLayer(m));
+            markers = {};
+
+            const bounds = L.latLngBounds(); // To fit all aircraft
+            let aircraftFound = false;
+
+            // 1. Calendar flights (by flight number)
+            for (const event of calendarEvents) {
+                const summary = event.summary || '';
+                const flightMatch = summary.match(/^(\d{3,4})/) || summary.match(/(\d{3,4})/);
+                if (!flightMatch) continue;
+                const flightNum = flightMatch[1];
+
+                try {
+                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${flightNum}/`);
+                    const data = await res.json();
+                    const ac = data.acList?.[0];
+                    if (ac && ac.Lat && ac.Long) {
+                        addMarker(ac.Lat, ac.Long, {
+                            title: flightNum,
+                            desc: summary,
+                            tail: ac.Reg || 'Unknown',
+                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                            spd: ac.Spd || '?'
+                        });
+                        bounds.extend([ac.Lat, ac.Long]);
+                        aircraftFound = true;
+                    }
+                } catch (e) {}
+            }
+
+            // 2. Always-track friend tails
+            for (const friend of FRIEND_TAILS) {
+                try {
+                    const res = await fetch(`https://adsbexchange.com/api/aircraft/reg/${friend.tail}/`);
+                    const data = await res.json();
+                    const ac = data.acList?.[0];
+                    if (ac && ac.Lat && ac.Long) {
+                        addMarker(ac.Lat, ac.Long, {
+                            title: friend.name,
+                            desc: 'Friend aircraft',
+                            tail: friend.tail,
+                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                            spd: ac.Spd || '?'
+                        });
+                        bounds.extend([ac.Lat, ac.Long]);
+                        aircraftFound = true;
+                    }
+                } catch (e) {}
+            }
+
+            // Smart zoom
+            if (aircraftFound) {
+                flightMap.fitBounds(bounds, { padding: [50, 50] }); // Nice padding around markers
+            } else {
+                flightMap.setView([42.3314, -83.0458], 7); // Reset to Detroit area
+            }
+        }
+
+        function addMarker(lat, lon, info) {
+            const key = info.tail || info.title;
+            if (markers[key]) flightMap.removeLayer(markers[key]);
+
+            const popup = `
+                <b>${info.title}</b><br>
+                ${info.desc}<br>
+                Tail: ${info.tail}<br>
+                Altitude: ${info.alt}<br>
+                Speed: ${info.spd} kts
+            `;
+
+            const marker = L.marker([lat, lon]).addTo(flightMap).bindPopup(popup);
+            markers[key] = marker;
+        }
+
+        // Button handlers
+        document.getElementById('authorize_button').onclick = () => {
+            if (!gapiReady || !gisReady) return alert('Still loading...');
+            tokenClient.requestAccessToken({prompt: ''});
+        };
+
+        document.getElementById('signout_button').onclick = () => {
             google.accounts.oauth2.revoke(gapi.client.getToken()?.access_token || '');
             gapi.client.setToken('');
             document.getElementById('content').innerText = 'Signed out. Click Authorize to reconnect.';
             document.getElementById('authorize_button').innerText = 'Authorize with Google';
             document.getElementById('signout_button').classList.add('hidden');
-        }
+        };
 
-        async function listUpcomingEvents() {
-            try {
-                if (!gapi.client || !gapi.client.calendar) {
-                    throw new Error('Google API client not fully loaded or initialized - try re-authorizing');
-                }
-
-                const request = {
-                    'calendarId': '5cccae2970c15e751e9c2e23944e500a99e8cf04657e4c24508b3e9cb5b1b9eb@group.calendar.google.com',
-                    'timeMin': (new Date()).toISOString(),
-                    'showDeleted': false,
-                    'singleEvents': true,
-                    'maxResults': 10,
-                    'orderBy': 'startTime'
-                };
-
-                const response = await gapi.client.calendar.events.list(request);
-
-                if (!response || !response.result) {
-                    throw new Error('API response was empty or invalid');
-                }
-
-                const events = response.result.items || [];
-
-                if (events.length === 0) {
-                    document.getElementById('content').innerText = 'No upcoming flights found in the calendar.';
-                    return;
-                }
-
-                let output = 'Upcoming Flights:\n\n';
-                events.forEach(event => {
-                    const start = event.start?.dateTime
-                        ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                        : event.start?.date || 'No date';
-                    output += `✈️ ${event.summary || 'Flight'} - ${start}\n`;
-                    if (event.description) output += `Details: ${event.description}\n\n`;
-                });
-                document.getElementById('content').innerText = output;
-
-                if (!window.refreshInterval) {
-                    window.refreshInterval = setInterval(listUpcomingEvents, 300000);
-                    console.log('Auto-refresh started: every 5 minutes');
-                }
-
-            } catch (err) {
-                let errMsg = 'Error loading flights: ' + (err.message || 'Unknown error');
-                if (err.result?.error?.message) errMsg += '\nAPI Details: ' + err.result.error.message;
-                document.getElementById('content').innerText = errMsg;
-                console.error('Calendar API error:', err);
-            }
-        }
-
-        document.getElementById('authorize_button').onclick = handleAuthClick;
-        document.getElementById('signout_button').onclick = handleSignoutClick;
+        // Start map & friend tracking
+        initMap();
+        setInterval(updateAllAircraftOnMap, 60000); // Update friends every minute
+        updateAllAircraftOnMap([]); // Initial empty call for friends
     </script>
 </body>
 </html>
