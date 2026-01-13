@@ -159,6 +159,12 @@
                 const contentType = res.headers.get('content-type') || '';
                 const text = await res.text();
 
+                // If ADSBExchange returns a NO_AUTH token like {"NO_AUTH"}, treat it specially
+                if (/^\s*\{\s*"?NO_AUTH"?\s*\}\s*$/.test(text)) {
+                    console.warn(`${label} - ADSBExchange returned NO_AUTH`);
+                    return { data: null, status: res.status, contentType, raw: text, error: 'NO_AUTH' };
+                }
+
                 // Strip common XSSI prefix like )]}'\n and common assignment prefixes (e.g. "var x = ")
                 let cleaned = text.replace(/^\)\]\}'\s*/, '').trim();
                 cleaned = cleaned.replace(/^[\sA-Za-z0-9_$]+\s*=\s*/, '').trim();
@@ -219,8 +225,41 @@
 
                 try {
                     const resObj = await safeFetchJson(`https://adsbexchange.com/api/aircraft/call/${callsign}/`, callsign);
+
+                    // If ADSBExchange returned NO_AUTH or no data, try OpenSky fallback
                     if (!resObj.data) {
-                        console.log(`No JSON data for ${callsign} (status ${resObj.status})`);
+                        if (resObj.error === 'NO_AUTH') {
+                            console.warn(`ADSBExchange NO_AUTH for ${callsign} — trying OpenSky fallback`);
+                        } else {
+                            console.log(`No JSON data for ${callsign} from ADSBExchange (status ${resObj.status}) — trying OpenSky fallback`);
+                        }
+
+                        try {
+                            const osRes = await safeFetchJson(`https://opensky-network.org/api/states/all?callsign=${callsign}`, 'OpenSky:' + callsign);
+                            if (osRes.data && Array.isArray(osRes.data.states) && osRes.data.states.length > 0) {
+                                const state = osRes.data.states[0];
+                                const lon = state[5];
+                                const lat = state[6];
+                                if (lat && lon) {
+                                    addMarker(lat, lon, {
+                                        title: callsign + ' (OpenSky)',
+                                        desc: summary + ' (from OpenSky)',
+                                        tail: 'Unknown',
+                                        alt: state[7] ? Math.round(state[7] * 3.28) + ' ft' : '?',
+                                        spd: state[9] || '?'
+                                    });
+                                    bounds.extend([lat, lon]);
+                                    aircraftFound = true;
+                                    continue; // processed this flight
+                                }
+                            } else {
+                                console.log(`OpenSky had no data for ${callsign} (status ${osRes.status})`);
+                            }
+                        } catch (e) {
+                            console.error(`OpenSky fallback failed for ${callsign}:`, e.message || e);
+                        }
+
+                        // No data from either source — continue to next flight
                         continue;
                     }
 
@@ -240,7 +279,7 @@
                         aircraftFound = true;
                     }
                 } catch (e) {
-                    console.log(`Fetch/parse failed for ${callsign}:`, e.message);
+                    console.log(`Fetch/parse failed for ${callsign}:`, e.message || e);
                 }
             }
 
