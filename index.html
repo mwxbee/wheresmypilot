@@ -171,35 +171,45 @@
 
             // Spirit flights from calendar (add NKS prefix)
             for (const event of calendarEvents) {
-                const summary = event.summary || '';
-                const flightMatch = summary.match(/(\d{4})/);
-                if (!flightMatch) continue;
-                const flightNum = flightMatch[1];
-                const callsign = 'NKS' + flightNum;
+    const summary = event.summary || '';
+    const flightMatch = summary.match(/(\d{4})/);
+    if (!flightMatch) continue;
+    const flightNum = flightMatch[1];
+    const callsign = 'NKS' + flightNum;
 
-                try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
-                    const data = await res.json();
-                    console.log(`Fetch result for ${callsign}:`, data);  // Debug: see API response
+    try {
+        const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
+        
+        // Check if response is actually JSON
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            console.log(`Non-JSON response for ${callsign}: ${contentType || 'no content-type'}`);
+            const text = await res.text();
+            console.log(`Response body: ${text.substring(0, 100)}...`); // Preview
+            continue; // Skip
+        }
 
-                    const ac = data.acList?.[0];
-                    if (ac && ac.Lat && ac.Long) {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: callsign,
-                            desc: summary,
-                            tail: ac.Reg || 'Unknown',
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    } else {
-                        console.log(`No match for ${callsign} in acList`);
-                    }
-                } catch (e) {
-                    console.log(`Fetch failed for ${callsign}:`, e.message);
-                }
-            }
+        const data = await res.json();
+        console.log(`Fetch result for ${callsign}:`, data);
+
+        const ac = data.acList?.[0];
+        if (ac && ac.Lat && ac.Long) {
+            addMarker(ac.Lat, ac.Long, {
+                title: callsign,
+                desc: summary,
+                tail: ac.Reg || 'Unknown',
+                alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
+                spd: ac.Spd || '?'
+            });
+            bounds.extend([ac.Lat, ac.Long]);
+            aircraftFound = true;
+        } else {
+            console.log(`No aircraft match for ${callsign}`);
+        }
+    } catch (e) {
+        console.log(`Fetch or parse failed for ${callsign}:`, e.message);
+    }
+}
 
             // Friend tails
             for (const friend of FRIEND_TAILS) {
