@@ -152,32 +152,42 @@
         }
 
         // Safer JSON fetch helper: reads body as text, strips common XSSI prefix and attempts JSON.parse.
+        // Added a fallback transform that quotes unquoted keys and removes trailing commas if needed.
         async function safeFetchJson(url, label) {
             try {
                 const res = await fetch(url);
                 const contentType = res.headers.get('content-type') || '';
                 const text = await res.text();
 
-                // Strip common XSSI prefix like )]}'\n
-                const cleaned = text.replace(/^\)\]\}'\s*/, '');
+                // Strip common XSSI prefix like )]}'\n and common assignment prefixes (e.g. "var x = ")
+                let cleaned = text.replace(/^\)\]\}'\s*/, '').trim();
+                cleaned = cleaned.replace(/^[\sA-Za-z0-9_$]+\s*=\s*/, '').trim();
+                cleaned = cleaned.replace(/;+\s*$/, ''); // remove trailing semicolons
 
-                if (!contentType.includes('application/json')) {
-                    // Still try to parse; some endpoints mis-report content-type or include XSSI prefixes
+                // Try direct parse first
+                try {
+                    return { data: JSON.parse(cleaned), status: res.status, contentType, raw: text };
+                } catch (e) {
+                    console.warn(`${label} - initial JSON.parse failed:`, e.message);
+                }
+
+                // Remove trailing commas before } or ]
+                let attempt = cleaned.replace(/,(\s*[}\]])/g, '$1');
+
+                // If keys are unquoted, quote them: { key: value } -> { "key": value }
+                // This is a heuristic and may be brittle; log what we do.
+                const maybeObjectLiteral = /^[\{\[]/.test(attempt);
+                if (maybeObjectLiteral) {
+                    const quoted = attempt.replace(/([\{,]\s*)([A-Za-z0-9_@$]+)\s*:/g, '$1"$2":');
                     try {
-                        const parsed = JSON.parse(cleaned);
-                        return { data: parsed, status: res.status, contentType, raw: text };
-                    } catch (parseErr) {
-                        console.error(`${label} - non-JSON content-type (${contentType}) and parse failed`);
+                        return { data: JSON.parse(quoted), status: res.status, contentType, raw: text, transformed: true };
+                    } catch (e) {
+                        console.error(`${label} - fallback transform parse failed:`, e.message);
                         console.error(`${label} - response (first 2000 chars):`, text.slice(0, 2000));
                         return { data: null, status: res.status, contentType, raw: text };
                     }
-                }
-
-                try {
-                    const parsed = JSON.parse(cleaned);
-                    return { data: parsed, status: res.status, contentType, raw: text };
-                } catch (err) {
-                    console.error(`${label} - JSON parse failed:`, err, 'status:', res.status, 'content-type:', contentType);
+                } else {
+                    console.error(`${label} - response not JSON/object-like. content-type: ${contentType}`);
                     console.error(`${label} - response (first 2000 chars):`, text.slice(0, 2000));
                     return { data: null, status: res.status, contentType, raw: text };
                 }
