@@ -41,9 +41,10 @@
 
         // Friend tails
         const FRIEND_TAILS = [
-            { tail: 'N114JD', name: 'N114JD' },
-            { tail: 'N4303B', name: 'DOLLY' }
-        ];
+    { tail: 'N114JD', name: 'N114JD' },
+    { tail: 'N4303B', name: 'DOLLY' },
+    { tail: 'N693NK', name: 'NKS1643 Test' } // temporary
+];
 
         let tokenClient;
         let gapiReady = false;
@@ -170,14 +171,23 @@
     const callsign = 'NKS' + flightNum;
 
     try {
-        const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
-
-        // Check content type first
-        const contentType = res.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            // Non-JSON = no aircraft or error → skip silently
-            continue;
-        }
+    const res = await fetch(`https://opensky-network.org/api/states/all?callsign=${callsign}`);
+    const data = await res.json();
+    const state = data.states?.find(s => s[1]?.trim() === callsign);
+    if (state && state[6] && state[5]) { // lat, lon
+        addMarker(state[6], state[5], {
+            title: callsign,
+            desc: summary,
+            tail: state[2] || 'Unknown', // ICAO hex
+            alt: state[13] ? Math.round(state[13] * 3.28) + ' ft' : '?',
+            spd: state[9] ? Math.round(state[9]) + ' kt' : '?'
+        });
+        bounds.extend([state[6], state[5]]);
+        aircraftFound = true;
+    }
+} catch (e) {
+    console.log(`OpenSky fetch failed for ${callsign}:`, e.message);
+}
 
         const data = await res.json();
 
