@@ -193,42 +193,59 @@
             const bounds = L.latLngBounds();
             let aircraftFound = false;
 
-            // Spirit flights
-            for (const event of calendarEvents) {
-                const summary = event.summary || '';
-                const flightMatch = summary.match(/(\d{4})/);
-                if (!flightMatch) continue;
-                const flightNum = flightMatch[1];
-                const callsign = 'NKS' + flightNum;
+            // Spirit flights via FlightAware AeroAPI
+for (const event of calendarEvents) {
+    const summary = event.summary || '';
+    const flightMatch = summary.match(/(\d{4})/);
+    if (!flightMatch) continue;
+    const flightNum = flightMatch[1];
 
-                try {
-                    const res = await fetch(`https://adsbexchange.com/api/aircraft/call/${callsign}/`);
-                    const contentType = res.headers.get('content-type');
-                    if (!contentType || !contentType.includes('application/json')) {
-                        const text = await res.text();
-                        console.log(`Non-JSON for ${callsign} (${res.status}): ${text.substring(0, 100)}...`);
-                        continue;
-                    }
+    // Get date from event start (or use current date if missing)
+    let flightDate = 'current'; // fallback
+    if (event.start?.dateTime) {
+        const dateObj = new Date(event.start.dateTime);
+        flightDate = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+    }
 
-                    const data = await res.json();
-                    console.log(`Result for ${callsign}:`, data);
+    const flightId = `NKS${flightNum}-${flightDate}`;
 
-                    const ac = data.acList?.[0];
-                    if (ac && ac.Lat && ac.Long) {
-                        addMarker(ac.Lat, ac.Long, {
-                            title: callsign,
-                            desc: summary,
-                            tail: ac.Reg || 'Unknown',
-                            alt: ac.Alt ? Math.round(ac.Alt * 3.28) + ' ft' : '?',
-                            spd: ac.Spd || '?'
-                        });
-                        bounds.extend([ac.Lat, ac.Long]);
-                        aircraftFound = true;
-                    }
-                } catch (e) {
-                    console.log(`Fetch/parse failed for ${callsign}:`, e.message);
-                }
+    try {
+        const res = await fetch(`https://aeroapi.flightaware.com/aeroapi/flights/${flightId}/track`, {
+            headers: {
+                'x-apikey': 'LEVpFYiAy2HzFHWajMmHb8dADh4yx17R'
             }
+        });
+
+        if (!res.ok) {
+            console.log(`AeroAPI failed for ${flightId}: status ${res.status}`);
+            continue;
+        }
+
+        const data = await res.json();
+        console.log(`AeroAPI track for ${flightId}:`, data);
+
+        // Get the most recent position from track
+        const track = data.track || [];
+        if (track.length > 0) {
+            const latest = track[track.length - 1];
+            if (latest.latitude && latest.longitude) {
+                addMarker(latest.latitude, latest.longitude, {
+                    title: `NKS${flightNum}`,
+                    desc: summary + ' (FlightAware)',
+                    tail: data.aircraft_registration || 'Unknown',
+                    alt: latest.altitude_ft ? latest.altitude_ft + ' ft' : '?',
+                    spd: latest.groundspeed_kts ? latest.groundspeed_kts + ' kt' : '?'
+                });
+                bounds.extend([latest.latitude, latest.longitude]);
+                aircraftFound = true;
+            }
+        } else {
+            console.log(`No track data for ${flightId}`);
+        }
+    } catch (e) {
+        console.log(`AeroAPI fetch failed for ${flightId}:`, e.message);
+    }
+}
 
             // Friend tails
             for (const friend of FRIEND_TAILS) {
