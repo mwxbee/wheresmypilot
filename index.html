@@ -66,11 +66,13 @@
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
         const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
 
-        // Friend tails
-        const FRIEND_TAILS = [
-            { tail: 'N114JD', name: 'N114JD' },
-            { tail: 'N4303B', name: 'DOLLY' }
-        ];
+        // Friend/family tail numbers + names
+const FRIEND_TAILS = [
+    { tail: 'N4303B', name: 'DOLLY' },
+    { tail: 'N14JD',   name: 'N14JD'   },
+    { tail: 'N9JD',    name: 'N9JD'    },
+    { tail: 'N174AC',  name: 'N174AC'  }
+];
 
         let tokenClient;
         let gapiReady = false;
