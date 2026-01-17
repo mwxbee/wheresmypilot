@@ -72,6 +72,7 @@ const FRIEND_TAILS = [
     { tail: 'N14JD',   name: 'N14JD'   },
     { tail: 'N9JD',    name: 'N9JD'    },
     { tail: 'N174AC',  name: 'N174AC'  }
+    { tail: 'N683NK',  name: 'test'  }
 ];
 
         let tokenClient;
@@ -212,11 +213,13 @@ for (const event of calendarEvents) {
     const flightId = `NKS${flightNum}-${flightDate}`;
 
     try {
-        const res = await fetch(`https://aeroapi.flightaware.com/aeroapi/flights/${flightId}/track`, {
-            headers: {
-                'x-apikey': 'LEVpFYiAy2HzFHWajMmHb8dADh4yx17R'
-            }
-        });
+        const proxy = 'https://cors-anywhere.herokuapp.com/';
+const aeroUrl = `https://aeroapi.flightaware.com/aeroapi/flights/${flightId}/track`;
+const res = await fetch(proxy + aeroUrl, {
+    headers: {
+        'x-apikey': 'LEVpFYiAy2HzFHWajMmHb8dADh4yx17R'
+    }
+});
 
         if (!res.ok) {
             console.log(`AeroAPI failed for ${flightId}: status ${res.status}`);
